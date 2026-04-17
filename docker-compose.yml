@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: cvmanager-backend
+    environment:
+      DATABASE_URL: sqlite:////data/cvmanager.db
+      UPLOAD_DIR: /data/uploads
+      DEFAULT_ADMIN_USERNAME: admin
+      DEFAULT_ADMIN_PASSWORD: admin123
+    volumes:
+      - ./docker-data:/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: cvmanager-frontend
+    ports:
+      - "8973:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

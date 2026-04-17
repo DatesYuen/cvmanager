@@ -1,0 +1,13 @@
+.git
+.gitignore
+.venv
+frontend/node_modules
+frontend/dist
+backend/__pycache__
+backend/uploads
+docker-data
+cvmanager.db
+*.pyc
+*.pyo
+*.pyd
+*.log
