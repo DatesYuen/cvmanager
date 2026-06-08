@@ -105,7 +105,13 @@ def review_single_item(req: AISingleReviewRequest, db: Session = Depends(get_db)
                        user: User = Depends(get_current_user)):
     if not has_permission(user, "can_review"):
         raise HTTPException(status_code=403, detail="Review permission required")
-    result = ai_review_single_item(db, req.entity_type, req.entity_id, reviewer_id=user.id)
+    result = ai_review_single_item(
+        db,
+        req.entity_type,
+        req.entity_id,
+        reviewer_id=user.id,
+        raw_text_override=req.raw_text,
+    )
     return AIReviewResponse(**result)
 
 

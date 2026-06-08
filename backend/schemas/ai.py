@@ -40,6 +40,7 @@ class AIReviewRequest(BaseModel):
 class AISingleReviewRequest(BaseModel):
     entity_type: str
     entity_id: int
+    raw_text: Optional[str] = None
 
 
 class AITestRequest(BaseModel):

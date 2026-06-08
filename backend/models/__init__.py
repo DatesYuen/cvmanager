@@ -15,8 +15,10 @@ from backend.models.academic_report import AcademicReport
 from backend.models.teaching_platform import TeachingPlatform
 from backend.models.industry_standard import IndustryStandard
 from backend.models.attachment import Attachment
+from backend.models.attachment_folder import AttachmentFolder
 from backend.models.review import ReviewRecord
 from backend.models.ai_settings import AISettings
+from backend.models.journal_partition import JournalPartition
 
 __all__ = [
     "User", "Person", "Resume",
@@ -28,5 +30,5 @@ __all__ = [
     "Conference", "SpecialIssue",
     "AcademicRole", "AcademicReport",
     "TeachingPlatform", "IndustryStandard",
-    "Attachment", "ReviewRecord", "AISettings",
+    "Attachment", "AttachmentFolder", "ReviewRecord", "AISettings", "JournalPartition",
 ]

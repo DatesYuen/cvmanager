@@ -6,6 +6,7 @@ from backend.database import engine, Base, SessionLocal
 from backend.models import *  # noqa: F401, F403 - import all models for table creation
 from backend.services.auth_service import hash_password
 from backend.config import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
+from backend.services.journal_partition_service import import_partition_workbook, apply_partition_to_paper_data
 
 from backend.routers import auth, users, persons, resumes, reviews, attachments, export, ai_agent, profile, external, showcase
 from backend.routers.entity_crud import register_entity, create_entity_router, ENTITY_REGISTRY
@@ -112,6 +113,7 @@ def on_startup():
     # Create tables
     Base.metadata.create_all(bind=engine)
     _migrate_patent_schema()
+    _import_journal_partitions()
 
     # Create default admin user
     db = SessionLocal()
@@ -175,6 +177,26 @@ def _migrate_patent_schema():
                 conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN is_first_author BOOLEAN DEFAULT 0")
             if "is_corresponding_author" not in paper_columns:
                 conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN is_corresponding_author BOOLEAN DEFAULT 0")
+            if "cas_partition" not in paper_columns:
+                conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN cas_partition VARCHAR(20) DEFAULT '未收录'")
+            if "is_top_journal" not in paper_columns:
+                conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN is_top_journal BOOLEAN DEFAULT 0")
+            if "issn" not in paper_columns:
+                conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN issn VARCHAR(50) DEFAULT ''")
+            if "eissn" not in paper_columns:
+                conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN eissn VARCHAR(50) DEFAULT ''")
+            if "impact_factor" not in paper_columns:
+                conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN impact_factor FLOAT")
+            if "source_type" not in paper_columns:
+                conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN source_type VARCHAR(20) DEFAULT '未知'")
+            if "citation_count" not in paper_columns:
+                conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN citation_count INTEGER")
+            if "citation_note" not in paper_columns:
+                conn.exec_driver_sql("ALTER TABLE papers ADD COLUMN citation_note VARCHAR(300) DEFAULT ''")
+            if "impact_factor" in paper_columns:
+                conn.exec_driver_sql("UPDATE papers SET impact_factor = NULL WHERE impact_factor = ''")
+            if "citation_count" in paper_columns:
+                conn.exec_driver_sql("UPDATE papers SET citation_count = NULL WHERE citation_count = ''")
 
         ai_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(ai_settings)").fetchall()}
         if ai_columns:
@@ -182,3 +204,33 @@ def _migrate_patent_schema():
                 conn.exec_driver_sql("ALTER TABLE ai_settings ADD COLUMN ai_review_concurrency INTEGER DEFAULT 2")
             if "ai_review_retry_count" not in ai_columns:
                 conn.exec_driver_sql("ALTER TABLE ai_settings ADD COLUMN ai_review_retry_count INTEGER DEFAULT 1")
+
+        attachment_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(attachments)").fetchall()}
+        if attachment_columns and "folder_id" not in attachment_columns:
+            conn.exec_driver_sql("ALTER TABLE attachments ADD COLUMN folder_id INTEGER")
+
+
+def _import_journal_partitions():
+    db = SessionLocal()
+    try:
+        import_partition_workbook(db)
+        for paper in db.query(Paper).all():
+            data = {
+                "journal": paper.journal,
+                "doi": paper.doi,
+                "cas_partition": paper.cas_partition,
+                "is_top_journal": paper.is_top_journal,
+                "issn": paper.issn,
+                "eissn": paper.eissn,
+                "impact_factor": paper.impact_factor,
+                "source_type": paper.source_type,
+            }
+            before = dict(data)
+            apply_partition_to_paper_data(db, data)
+            if data != before:
+                for field, value in data.items():
+                    if hasattr(paper, field):
+                        setattr(paper, field, value)
+        db.commit()
+    finally:
+        db.close()

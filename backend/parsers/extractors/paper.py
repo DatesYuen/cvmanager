@@ -44,13 +44,17 @@ class PaperExtractor(BaseExtractor):
         clean = re.sub(r'[（(]\s*(?:CCF\s*[A-C]|中科院[一二三四五]区|SCI|EI|SSCI|CSSCI|北大核心)[）)]\s*$', '', text).strip()
 
         # Extract DOI
-        doi_match = re.search(r'(?:doi:\s*|https?://doi\.org/)([^\s,，]+)', clean, re.I)
+        doi_match = re.search(r'(?:doi:\s*|https?://doi\.org/)?(10\.\d{4,9}/[^\s,，]+)', clean, re.I)
         if doi_match:
-            result["doi"] = doi_match.group(1).strip().rstrip('.')
+            result["doi"] = re.sub(r'[\s\]\)）.,，。；;]+$', '', doi_match.group(1).strip())
             clean = clean[:doi_match.start()].strip().rstrip(',，.')
 
         # Extract ISSN (remove it, not needed as field)
         clean = re.sub(r'ISSN\s*[\d-]+[,，\s]*', '', clean).strip()
+
+        marker_parsed = self._parse_j_marker(clean, result["doi"])
+        if marker_parsed:
+            return marker_parsed
 
         comma_parsed = self._parse_comma_delimited(clean, result["doi"])
         if comma_parsed:
@@ -108,6 +112,59 @@ class PaperExtractor(BaseExtractor):
         result["title"] = title
         result["journal"] = journal
 
+        return result
+
+    def _parse_j_marker(self, text: str, doi: str = "") -> Dict[str, Any] | None:
+        match = re.search(r'\[J\]\s*[,，]\s*([^,，]+)(?:[,，]\s*((?:19|20)\d{2}))?', text, re.I)
+        if not match:
+            return None
+
+        before_marker = text[:match.start()].strip().rstrip(",，.。")
+        journal = match.group(1).strip().rstrip(".。")
+        year = match.group(2) or ""
+        if not year:
+            year_match = re.search(r'(?:19|20)\d{2}', text[match.end():])
+            year = year_match.group(0) if year_match else ""
+
+        tokens = [token.strip().strip(".。") for token in re.split(r'[,，]\s*', before_marker) if token.strip()]
+        if len(tokens) < 2 or not journal:
+            return None
+
+        title_start = None
+        for idx, token in enumerate(tokens):
+            if not self._looks_like_author_name(token.rstrip("*")):
+                title_start = idx
+                break
+        if title_start is None:
+            title_start = max(0, len(tokens) - 1)
+
+        authors = self._parse_authors(", ".join(tokens[:title_start])) if title_start > 0 else []
+        title = ",".join(tokens[title_start:]).strip()
+        if not title:
+            return None
+
+        result = {
+            "title": title,
+            "journal": journal,
+            "year": year,
+            "doi": doi,
+            "issue": "",
+            "volume": "",
+            "pages": "",
+            "authors": authors,
+        }
+        trailing = text[match.end():]
+        vol_issue = re.search(r'(\d+)\s*\((\d+)\)', trailing)
+        if vol_issue:
+            result["volume"] = vol_issue.group(1)
+            result["issue"] = vol_issue.group(2)
+        else:
+            volume = re.search(r'Volume\s+(\d+)|\bVol\.?\s*(\d+)', trailing, re.I)
+            if volume:
+                result["volume"] = volume.group(1) or volume.group(2) or ""
+        pages = re.search(r'(\d+)\s*[-–]\s*(\d+)', trailing)
+        if pages:
+            result["pages"] = f"{pages.group(1)}-{pages.group(2)}"
         return result
 
     def _parse_comma_delimited(self, text: str, doi: str = "") -> Dict[str, Any] | None:

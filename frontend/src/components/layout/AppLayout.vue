@@ -16,10 +16,20 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>仪表盘</span>
         </el-menu-item>
-        <el-menu-item index="/persons">
-          <el-icon><User /></el-icon>
-          <span>人员管理</span>
-        </el-menu-item>
+        <el-sub-menu index="/person-management">
+          <template #title>
+            <el-icon><User /></el-icon>
+            <span>人员管理</span>
+          </template>
+          <el-menu-item index="/persons">
+            <el-icon><User /></el-icon>
+            <span>人员列表</span>
+          </el-menu-item>
+          <el-menu-item index="/attachments">
+            <el-icon><FolderOpened /></el-icon>
+            <span>附件管理</span>
+          </el-menu-item>
+        </el-sub-menu>
         <el-menu-item index="/reviews">
           <el-icon><Checked /></el-icon>
           <span>审核管理</span>

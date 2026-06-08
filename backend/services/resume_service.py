@@ -24,7 +24,8 @@ from backend.parsers.extractors.academic_role import AcademicRoleExtractor
 from backend.parsers.extractors.academic_report import AcademicReportExtractor
 from backend.parsers.extractors.teaching_platform import TeachingPlatformExtractor
 from backend.parsers.extractors.industry_standard import IndustryStandardExtractor
-from backend.services.paper_service import derive_paper_role_flags
+from backend.services.paper_service import derive_paper_role_flags, enrich_paper_data
+from backend.config import ENABLE_PUBLIC_PAPER_LOOKUP_ON_PARSE
 
 
 def parse_resume(db: Session, resume: Resume, person: Person):
@@ -62,6 +63,11 @@ def parse_resume(db: Session, resume: Resume, person: Person):
         if section_key == "paper":
             for item in new_items:
                 item.update(derive_paper_role_flags(item.get("authors", []), person.name, person.name_en))
+                item.update(enrich_paper_data(
+                    db,
+                    item,
+                    fetch_external=ENABLE_PUBLIC_PAPER_LOOKUP_ON_PARSE,
+                ))
 
         # Get existing items for diff
         existing = db.query(Model).filter(Model.person_id == person.id).all()

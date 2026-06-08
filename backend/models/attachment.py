@@ -9,6 +9,7 @@ class Attachment(Base):
     id = Column(Integer, primary_key=True, index=True)
     entity_type = Column(String(50), nullable=False)  # paper, project, patent, etc.
     entity_id = Column(Integer, nullable=False)
+    folder_id = Column(Integer, ForeignKey("attachment_folders.id"), nullable=True)
     file_path = Column(String(500), nullable=False)
     original_filename = Column(String(300), nullable=False)
     uploaded_by = Column(Integer, ForeignKey("users.id"))

@@ -89,7 +89,7 @@
             </div>
           </div>
           <div class="table-scroll">
-            <el-table :data="getFilteredTabRows(tab)" stripe size="small" max-height="520">
+            <el-table :data="getPagedTabRows(tab)" stripe size="small" max-height="500" class="entity-table">
               <el-table-column v-for="col in tab.columns" :key="col.prop"
                 :prop="col.prop" :label="col.label" :width="col.width" :min-width="col.minWidth"
                 :show-overflow-tooltip="true">
@@ -103,7 +103,7 @@
                     {{ row.applicants.map(a => a.name).join(', ') }}
                   </span>
                 </template>
-                <template #default="{ row }" v-else-if="col.prop === 'is_first_author' || col.prop === 'is_corresponding_author'">
+                <template #default="{ row }" v-else-if="col.prop === 'is_first_author' || col.prop === 'is_corresponding_author' || col.prop === 'is_top_journal'">
                   <el-tag size="small" :type="row[col.prop] ? 'success' : 'info'">
                     {{ row[col.prop] ? '是' : '否' }}
                   </el-tag>
@@ -123,6 +123,17 @@
                 </template>
               </el-table-column>
             </el-table>
+          </div>
+          <div class="pagination-bar">
+            <el-pagination
+              v-model:current-page="ensurePageState(tab.key).page"
+              v-model:page-size="ensurePageState(tab.key).pageSize"
+              :page-sizes="[10, 20, 50, 100, 200, 500]"
+              :total="getFilteredTabRows(tab).length"
+              layout="total, sizes, prev, pager, next, jumper"
+              background
+              @size-change="() => handlePageSizeChange(tab.key)"
+            />
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -150,6 +161,7 @@ const profile = ref(null)
 const educations = ref([])
 const workExperiences = ref([])
 const items = ref({})
+const pageStates = ref({})
 const loaded = ref(false)
 const mobile = ref(window.innerWidth <= 768)
 const activeTab = ref('papers')
@@ -164,34 +176,36 @@ const {
 
 const tabs = [
   { key: 'papers', label: '论文', columns: [
-    { prop: 'authors', label: '作者', minWidth: 220 },
+    { prop: 'authors', label: '作者', width: 200 },
     { prop: 'title', label: '标题', minWidth: 260 },
-    { prop: 'journal', label: '期刊', minWidth: 180 },
-    { prop: 'year', label: '年份', width: 90 },
-    { prop: 'is_first_author', label: '第一作者', width: 100 },
-    { prop: 'is_corresponding_author', label: '通讯作者', width: 100 },
-    { prop: 'doi', label: 'DOI', minWidth: 220 },
+    { prop: 'journal', label: '期刊', width: 180 },
+    { prop: 'year', label: '年份', width: 70 },
+    { prop: 'cas_partition', label: '中科院分区', width: 100 },
+    { prop: 'is_top_journal', label: 'TOP期刊', width: 90 },
+    { prop: 'is_first_author', label: '第一作者', width: 90 },
+    { prop: 'is_corresponding_author', label: '通讯作者', width: 90 },
+    { prop: 'doi', label: 'DOI', width: 150 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'projects', label: '项目', columns: [
-    { prop: 'project_type', label: '类型', minWidth: 160 },
+    { prop: 'project_type', label: '类型', width: 150 },
     { prop: 'name', label: '名称', minWidth: 240 },
-    { prop: 'project_number', label: '编号', minWidth: 160 },
-    { prop: 'start_date', label: '开始', width: 110 },
-    { prop: 'end_date', label: '结束', width: 110 },
-    { prop: 'role', label: '身份', minWidth: 120 },
-    { prop: 'amount', label: '金额', width: 110 },
+    { prop: 'project_number', label: '编号', width: 140 },
+    { prop: 'start_date', label: '开始', width: 100 },
+    { prop: 'end_date', label: '结束', width: 100 },
+    { prop: 'role', label: '身份', width: 100 },
+    { prop: 'amount', label: '金额', width: 80 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'awards', label: '获奖', columns: [
     { prop: 'award_name', label: '奖项名称', minWidth: 220 },
     { prop: 'project_name', label: '项目名称', minWidth: 220 },
-    { prop: 'participants', label: '人员', minWidth: 220 },
-    { prop: 'awarding_body', label: '颁奖单位', minWidth: 180 },
+    { prop: 'participants', label: '人员', width: 200 },
+    { prop: 'awarding_body', label: '颁奖单位', width: 150 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'patents', label: '专利', columns: [
-    { prop: 'applicants', label: '申请人', minWidth: 220 },
+    { prop: 'applicants', label: '申请人', width: 200 },
     { prop: 'patent_name', label: '专利名称', minWidth: 260 },
     { prop: 'application_number', label: '申请号', minWidth: 180 },
     { prop: 'authorization_number', label: '授权号', minWidth: 180 },
@@ -199,7 +213,7 @@ const tabs = [
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'software_copyrights', label: '软著', columns: [
-    { prop: 'applicant', label: '申请人', minWidth: 180 },
+    { prop: 'applicant', label: '申请人', width: 200 },
     { prop: 'name', label: '软著名称', minWidth: 220 },
     { prop: 'registration_date', label: '登记时间', minWidth: 140 },
     { prop: 'registration_number', label: '登记号', minWidth: 180 },
@@ -207,48 +221,48 @@ const tabs = [
   ]},
   { key: 'student_awards', label: '指导学生获奖', columns: [
     { prop: 'award_name', label: '奖项名称', minWidth: 220 },
-    { prop: 'level', label: '等级', minWidth: 120 },
-    { prop: 'role', label: '身份', minWidth: 120 },
-    { prop: 'award_date', label: '获奖时间', minWidth: 140 },
+    { prop: 'level', label: '等级', width: 100 },
+    { prop: 'role', label: '身份', width: 100 },
+    { prop: 'award_date', label: '获奖时间', width: 120 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'conferences', label: '承办会议', columns: [
     { prop: 'name', label: '会议名称', minWidth: 260 },
     { prop: 'date', label: '时间', minWidth: 130 },
-    { prop: 'role', label: '身份', minWidth: 120 },
+    { prop: 'role', label: '身份', width: 100 },
     { prop: 'website', label: '网址', minWidth: 220 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'special_issues', label: '承办特刊', columns: [
     { prop: 'issue_name', label: '特刊名称', minWidth: 240 },
-    { prop: 'journal_name', label: '期刊名称', minWidth: 200 },
-    { prop: 'date', label: '时间', minWidth: 130 },
-    { prop: 'role', label: '身份', minWidth: 120 },
+    { prop: 'journal_name', label: '期刊名称', width: 180 },
+    { prop: 'date', label: '时间', width: 120 },
+    { prop: 'role', label: '身份', width: 120 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'academic_roles', label: '学术兼职', columns: [
     { prop: 'title', label: '头衔', minWidth: 240 },
-    { prop: 'start_date', label: '开始', minWidth: 130 },
-    { prop: 'end_date', label: '结束', minWidth: 130 },
+    { prop: 'start_date', label: '开始', width: 120 },
+    { prop: 'end_date', label: '结束', width: 120 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'academic_reports', label: '学术报告', columns: [
     { prop: 'name', label: '报告名称', minWidth: 240 },
-    { prop: 'report_type', label: '类型', minWidth: 140 },
-    { prop: 'date', label: '时间', minWidth: 140 },
+    { prop: 'report_type', label: '类型', width: 120 },
+    { prop: 'date', label: '时间', width: 120 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'teaching_platforms', label: '教学平台建设', columns: [
     { prop: 'name', label: '名称', minWidth: 220 },
-    { prop: 'issuing_body', label: '发布单位', minWidth: 180 },
-    { prop: 'approval_date', label: '获批时间', minWidth: 140 },
-    { prop: 'position', label: '职位', minWidth: 140 },
+    { prop: 'issuing_body', label: '发布单位', width: 150 },
+    { prop: 'approval_date', label: '获批时间', width: 120 },
+    { prop: 'position', label: '职位', width: 100 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
   { key: 'industry_standards', label: '行业标准', columns: [
     { prop: 'name', label: '标准名称', minWidth: 240 },
-    { prop: 'publish_date', label: '发布时间', minWidth: 140 },
-    { prop: 'role', label: '身份', minWidth: 120 },
+    { prop: 'publish_date', label: '发布时间', width: 120 },
+    { prop: 'role', label: '身份', width: 100 },
     { prop: 'attachments', label: '附件', minWidth: 200 },
   ]},
 ]
@@ -264,6 +278,26 @@ const hasContent = computed(() => {
 
 function getFilteredTabRows(tab) {
   return getFilteredRows(tab, items.value[tab.key] || [])
+}
+
+function ensurePageState(tabKey) {
+  if (!pageStates.value[tabKey]) {
+    pageStates.value[tabKey] = { page: 1, pageSize: 20 }
+  }
+  return pageStates.value[tabKey]
+}
+
+function getPagedTabRows(tab) {
+  const rows = getFilteredTabRows(tab)
+  const state = ensurePageState(tab.key)
+  const maxPage = Math.max(1, Math.ceil(rows.length / state.pageSize))
+  if (state.page > maxPage) state.page = maxPage
+  const start = (state.page - 1) * state.pageSize
+  return rows.slice(start, start + state.pageSize)
+}
+
+function handlePageSizeChange(tabKey) {
+  ensurePageState(tabKey).page = 1
 }
 
 function updateMobile() {
@@ -339,6 +373,12 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.pagination-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 @media (max-width: 768px) {

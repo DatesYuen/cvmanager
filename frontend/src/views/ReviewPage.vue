@@ -47,7 +47,12 @@
               <div class="review-expand">
                 <div class="review-block">
                   <div class="review-block-title">原始文本</div>
-                  <div class="review-raw-text">{{ record.raw_text }}</div>
+                  <el-input
+                    :model-value="getRawTextDraft(entityType, record)"
+                    @update:model-value="value => setRawTextDraft(entityType, record, value)"
+                    type="textarea"
+                    :rows="5"
+                  />
                 </div>
                 <div class="review-block">
                   <div class="review-block-header">
@@ -66,7 +71,11 @@
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="raw_text" label="原始文本" show-overflow-tooltip min-width="420" />
+          <el-table-column label="原始文本" show-overflow-tooltip min-width="420">
+            <template #default="{ row: record }">
+              {{ getRawTextDraft(entityType, record) }}
+            </template>
+          </el-table-column>
           <el-table-column label="置信度" width="90">
             <template #default="{ row }">
               <el-tag size="small" :type="confidenceType(row.confidence)">
@@ -123,6 +132,7 @@ const pendingItems = ref({})
 const threshold = ref(80)
 const aiThreshold = ref(60)
 const editDrafts = ref({})
+const rawTextDrafts = ref({})
 const aiConfigured = ref(false)
 const aiReviewing = ref(false)
 const aiReviewCancelled = ref(false)
@@ -305,6 +315,10 @@ function buildDraft(record) {
   return draft
 }
 
+function rawTextDraftKey(entityType, id) {
+  return `${entityType}:${id}`
+}
+
 function getDraft(entityType, record) {
   const key = draftKey(entityType, record.id)
   if (!editDrafts.value[key]) {
@@ -315,6 +329,19 @@ function getDraft(entityType, record) {
 
 function resetDraft(entityType, record) {
   editDrafts.value[draftKey(entityType, record.id)] = buildDraft(record)
+  rawTextDrafts.value[rawTextDraftKey(entityType, record.id)] = record.raw_text || ''
+}
+
+function getRawTextDraft(entityType, record) {
+  const key = rawTextDraftKey(entityType, record.id)
+  if (rawTextDrafts.value[key] === undefined) {
+    rawTextDrafts.value[key] = record.raw_text || ''
+  }
+  return rawTextDrafts.value[key]
+}
+
+function setRawTextDraft(entityType, record, value) {
+  rawTextDrafts.value[rawTextDraftKey(entityType, record.id)] = value
 }
 
 function getStructuredRows(entityType, record) {
@@ -356,14 +383,17 @@ async function loadPendingItems() {
     const res = await api.get(`/api/reviews/pending/${selectedPerson.value}`)
     pendingItems.value = res.data
     editDrafts.value = {}
+    rawTextDrafts.value = {}
     Object.entries(res.data).forEach(([entityType, items]) => {
       items.forEach(item => {
         editDrafts.value[draftKey(entityType, item.id)] = buildDraft(item)
+        rawTextDrafts.value[rawTextDraftKey(entityType, item.id)] = item.raw_text || ''
       })
     })
   } catch (e) {
     pendingItems.value = {}
     editDrafts.value = {}
+    rawTextDrafts.value = {}
   }
 }
 
@@ -375,7 +405,10 @@ async function reviewItem(entityType, record, action) {
       action,
     }
     if (action === 'approve') {
-      payload.updated_fields = getDraft(entityType, record)
+      payload.updated_fields = {
+        ...getDraft(entityType, record),
+        raw_text: getRawTextDraft(entityType, record),
+      }
     }
     await api.post('/api/reviews/action', payload)
     ElMessage.success(action === 'approve' ? '已通过' : '已拒绝')
@@ -421,7 +454,8 @@ async function runAiReview() {
         const index = cursor
         cursor += 1
         const { entityType, item } = tasks[index]
-        aiStatusText.value = `AI审核进度 ${completed + 1}/${tasks.length}：正在处理 ${entityLabels[entityType] || entityType} - ${String(item.raw_text || '').slice(0, 60)}`
+        const rawText = getRawTextDraft(entityType, item)
+        aiStatusText.value = `AI审核进度 ${completed + 1}/${tasks.length}：正在处理 ${entityLabels[entityType] || entityType} - ${String(rawText || '').slice(0, 60)}`
         const key = aiItemKey(entityType, item.id)
         aiItemLoading.value[key] = true
         try {
@@ -432,6 +466,7 @@ async function runAiReview() {
               res = await api.post('/api/ai/review-item', {
                 entity_type: entityType,
                 entity_id: item.id,
+                raw_text: rawText,
               })
               attemptError = null
               break
@@ -485,6 +520,7 @@ async function runSingleAiReview(entityType, record) {
     const res = await api.post('/api/ai/review-item', {
       entity_type: entityType,
       entity_id: record.id,
+      raw_text: getRawTextDraft(entityType, record),
     })
     if (res.data.reviewed_count > 0) {
       ElMessage.success('单条 AI 审核完成，结果已回填，仍需人工通过。')

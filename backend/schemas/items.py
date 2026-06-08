@@ -1,5 +1,5 @@
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class ProfileBase(BaseModel):
@@ -107,8 +107,30 @@ class PaperBase(ReviewableBase):
     issue: str = ""
     volume: str = ""
     pages: str = ""
+    cas_partition: str = "未收录"
+    is_top_journal: bool = False
+    issn: str = ""
+    eissn: str = ""
+    impact_factor: Optional[float] = None
+    source_type: str = "未知"
+    citation_count: Optional[int] = None
+    citation_note: str = ""
     is_first_author: bool = False
     is_corresponding_author: bool = False
+
+    @field_validator("impact_factor", mode="before")
+    @classmethod
+    def _clean_optional_float(cls, value):
+        if value in ("", None):
+            return None
+        return value
+
+    @field_validator("citation_count", mode="before")
+    @classmethod
+    def _clean_optional_int(cls, value):
+        if value in ("", None):
+            return None
+        return value
 
 
 class PaperCreate(PaperBase):
@@ -124,6 +146,14 @@ class PaperUpdate(BaseModel):
     issue: Optional[str] = None
     volume: Optional[str] = None
     pages: Optional[str] = None
+    cas_partition: Optional[str] = None
+    is_top_journal: Optional[bool] = None
+    issn: Optional[str] = None
+    eissn: Optional[str] = None
+    impact_factor: Optional[float] = None
+    source_type: Optional[str] = None
+    citation_count: Optional[int] = None
+    citation_note: Optional[str] = None
     is_first_author: Optional[bool] = None
     is_corresponding_author: Optional[bool] = None
     raw_text: Optional[str] = None

@@ -129,16 +129,18 @@
               <el-button size="small" type="danger" @click="removeFilter(tab.key, idx)">删除</el-button>
             </div>
           </div>
-          <el-table :data="getFilteredTabRows(tab)" stripe size="small" max-height="500">
+          <div class="table-scroll">
+          <el-table :data="getPagedTabRows(tab)" stripe size="small" max-height="500" class="entity-table">
             <el-table-column v-for="col in tab.columns" :key="col.prop"
               :prop="col.prop" :label="col.label" :width="col.width"
+              :min-width="col.minWidth"
               :show-overflow-tooltip="true">
               <template #default="{ row }" v-if="col.prop === 'authors'">
                 <span v-if="Array.isArray(row.authors)">
                   {{ row.authors.map(a => a.name + (a.is_corresponding_author ? '*' : '')).join(', ') }}
                 </span>
               </template>
-              <template #default="{ row }" v-else-if="col.prop === 'is_first_author' || col.prop === 'is_corresponding_author'">
+              <template #default="{ row }" v-else-if="col.prop === 'is_first_author' || col.prop === 'is_corresponding_author' || col.prop === 'is_top_journal'">
                 <el-tag size="small" :type="row[col.prop] ? 'success' : 'info'">
                   {{ row[col.prop] ? '是' : '否' }}
                 </el-tag>
@@ -166,7 +168,12 @@
             </el-table-column>
             <el-table-column label="附件" width="70">
               <template #default="{ row }">
-                <el-button size="small" circle @click="openAttachments(tab.key, row.id)">
+                <el-button
+                  size="small"
+                  circle
+                  :class="attachmentButtonClass(tab.key, row.id)"
+                  @click="openAttachments(tab.key, row)"
+                >
                   <el-icon><Paperclip /></el-icon>
                 </el-button>
               </template>
@@ -178,6 +185,18 @@
               </template>
             </el-table-column>
           </el-table>
+          </div>
+          <div class="pagination-bar">
+            <el-pagination
+              v-model:current-page="ensurePageState(tab.key).page"
+              v-model:page-size="ensurePageState(tab.key).pageSize"
+              :page-sizes="[10, 20, 50, 100, 200, 500]"
+              :total="getFilteredTabRows(tab).length"
+              layout="total, sizes, prev, pager, next, jumper"
+              background
+              @size-change="() => handlePageSizeChange(tab.key)"
+            />
+          </div>
         </el-tab-pane>
       </el-tabs>
     </div>
@@ -214,14 +233,15 @@
 
     <!-- Attachments Dialog -->
     <el-dialog v-model="showAttachDialog" title="附件管理" width="600px">
-      <el-upload
-        :action="`/api/attachments/upload?entity_type=${attachEntity.type}&entity_id=${attachEntity.id}`"
-        :headers="{ Authorization: `Bearer ${auth.token}` }"
-        @success="loadAttachments"
-        :on-success="loadAttachments"
-      >
-        <el-button type="primary" size="small"><el-icon><Upload /></el-icon> 上传附件</el-button>
-      </el-upload>
+      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap">
+        <el-upload
+          :http-request="uploadAttachment"
+          :show-file-list="false"
+        >
+          <el-button type="primary" size="small"><el-icon><Upload /></el-icon> 上传附件</el-button>
+        </el-upload>
+        <el-checkbox v-model="noAttachmentChecked" @change="handleNoAttachmentChange">暂无</el-checkbox>
+      </div>
       <el-table :data="attachments" stripe size="small" style="margin-top:12px">
         <el-table-column prop="original_filename" label="文件名" />
         <el-table-column prop="uploaded_at" label="上传时间" width="180">
@@ -229,6 +249,7 @@
         </el-table-column>
         <el-table-column label="操作" width="160">
           <template #default="{ row }">
+            <el-button size="small" @click="previewAttachment(row.id)">查看</el-button>
             <el-button size="small" @click="downloadAttachment(row.id)">下载</el-button>
             <el-button size="small" type="danger" @click="deleteAttachment(row.id)">删除</el-button>
           </template>
@@ -304,6 +325,8 @@ const educations = ref([])
 const workExps = ref([])
 const resumeHistory = ref([])
 const tabData = ref({})
+const pageStates = ref({})
+const attachmentStatuses = ref({})
 const activeTab = ref('papers')
 const showHistory = ref(false)
 const showEditDialog = ref(false)
@@ -320,8 +343,9 @@ const saving = ref(false)
 const savingProfile = ref(false)
 const savingEducation = ref(false)
 const savingWork = ref(false)
-const attachEntity = ref({ type: '', id: 0 })
+const attachEntity = ref({ type: '', id: 0, displayName: '' })
 const attachments = ref([])
+const noAttachmentChecked = ref(false)
 const profileForm = ref({ introduction: '', phone: '', email: '', address: '' })
 const educationForm = ref({ start_date: '', end_date: '', school: '', major: '', degree: '' })
 const workForm = ref({ start_date: '', end_date: '', organization: '', position: '' })
@@ -343,6 +367,8 @@ const tabs = [
       { prop: 'title', label: '标题' },
       { prop: 'journal', label: '期刊', width: 180 },
       { prop: 'year', label: '年份', width: 70 },
+      { prop: 'cas_partition', label: '中科院分区', width: 100 },
+      { prop: 'is_top_journal', label: 'TOP期刊', width: 90 },
       { prop: 'is_first_author', label: '第一作者', width: 90 },
       { prop: 'is_corresponding_author', label: '通讯作者', width: 90 },
       { prop: 'doi', label: 'DOI', width: 150 },
@@ -356,6 +382,8 @@ const tabs = [
       { prop: 'volume', label: '卷号' },
       { prop: 'issue', label: '期号' },
       { prop: 'pages', label: '页数' },
+      { prop: 'cas_partition', label: '中科院分区' },
+      { prop: 'is_top_journal', label: 'TOP期刊' },
     ]
   },
   { key: 'projects', label: '项目', hasConfidence: true, apiName: 'projects',
@@ -534,6 +562,26 @@ function getFilteredTabRows(tab) {
   return getFilteredRows(tab, tabData.value[tab.key] || [])
 }
 
+function ensurePageState(tabKey) {
+  if (!pageStates.value[tabKey]) {
+    pageStates.value[tabKey] = { page: 1, pageSize: 20 }
+  }
+  return pageStates.value[tabKey]
+}
+
+function getPagedTabRows(tab) {
+  const rows = getFilteredTabRows(tab)
+  const state = ensurePageState(tab.key)
+  const maxPage = Math.max(1, Math.ceil(rows.length / state.pageSize))
+  if (state.page > maxPage) state.page = maxPage
+  const start = (state.page - 1) * state.pageSize
+  return rows.slice(start, start + state.pageSize)
+}
+
+function handlePageSizeChange(tabKey) {
+  ensurePageState(tabKey).page = 1
+}
+
 async function loadPerson() {
   const res = await api.get(`/api/persons/${personId.value}`)
   person.value = res.data
@@ -661,11 +709,27 @@ async function deleteWork(id) {
 
 async function loadTabData(tabKey) {
   try {
-    const res = await api.get(`/api/${tabKey}/`, { params: { person_id: personId.value } })
+    const res = await api.get(`/api/${tabKey}/`, {
+      params: { person_id: personId.value, page_size: 5000 }
+    })
     tabData.value[tabKey] = res.data
+    await loadAttachmentStatuses(tabKey, res.data)
   } catch (e) {
     tabData.value[tabKey] = []
+    attachmentStatuses.value[tabKey] = {}
   }
+}
+
+async function loadAttachmentStatuses(tabKey, rows) {
+  const ids = (rows || []).map(row => row.id).filter(Boolean)
+  if (!ids.length) {
+    attachmentStatuses.value[tabKey] = {}
+    return
+  }
+  const res = await api.get('/api/attachments/status', {
+    params: { entity_type: tabKey, entity_ids: ids.join(',') }
+  })
+  attachmentStatuses.value[tabKey] = res.data || {}
 }
 
 async function loadAllTabs() {
@@ -753,8 +817,12 @@ async function deleteItem(tabKey, itemId) {
   } catch (e) {}
 }
 
-function openAttachments(entityType, entityId) {
-  attachEntity.value = { type: entityType, id: entityId }
+function openAttachments(entityType, row) {
+  attachEntity.value = {
+    type: entityType,
+    id: row.id,
+    displayName: getAttachmentDisplayName(entityType, row),
+  }
   loadAttachments()
   showAttachDialog.value = true
 }
@@ -765,13 +833,63 @@ async function loadAttachments() {
       params: { entity_type: attachEntity.value.type, entity_id: attachEntity.value.id }
     })
     attachments.value = res.data
+    noAttachmentChecked.value = attachments.value.some(item => item.original_filename?.startsWith('【暂无】'))
+    updateAttachmentStatusFromList(attachEntity.value.type, attachEntity.value.id, attachments.value)
   } catch (e) {
     attachments.value = []
+    noAttachmentChecked.value = false
   }
 }
 
-function downloadAttachment(id) {
-  window.open(`/api/attachments/download/${id}`, '_blank')
+async function uploadAttachment(options) {
+  const form = new FormData()
+  form.append('file', options.file)
+  try {
+    const res = await api.post('/api/attachments/upload', form, {
+      params: { entity_type: attachEntity.value.type, entity_id: attachEntity.value.id },
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    options.onSuccess?.(res.data)
+    ElMessage.success('附件上传成功')
+    await loadAttachments()
+  } catch (e) {
+    options.onError?.(e)
+  }
+}
+
+async function handleNoAttachmentChange(checked) {
+  if (!checked) {
+    await api.delete('/api/attachments/placeholder', {
+      params: { entity_type: attachEntity.value.type, entity_id: attachEntity.value.id }
+    })
+    ElMessage.success('已删除暂无附件占位')
+    await loadAttachments()
+    return
+  }
+  await api.post('/api/attachments/placeholder', {
+    entity_type: attachEntity.value.type,
+    entity_id: attachEntity.value.id,
+    display_name: attachEntity.value.displayName,
+  })
+  ElMessage.success('已生成暂无附件占位')
+  await loadAttachments()
+}
+
+async function downloadAttachment(id) {
+  const res = await api.get(`/api/attachments/download/${id}`, { responseType: 'blob' })
+  const url = URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = getFilenameFromHeaders(res.headers['content-disposition']) || 'attachment'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function previewAttachment(id) {
+  const res = await api.get(`/api/attachments/preview/${id}`, { responseType: 'blob' })
+  const url = URL.createObjectURL(res.data)
+  window.open(url, '_blank')
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
 }
 
 async function deleteAttachment(id) {
@@ -783,8 +901,86 @@ async function deleteAttachment(id) {
   } catch (e) {}
 }
 
+function updateAttachmentStatusFromList(entityType, entityId, list) {
+  const status = {
+    count: list.length,
+    has_placeholder: list.some(item => item.original_filename?.startsWith('【暂无】')),
+    has_file: list.some(item => !item.original_filename?.startsWith('【暂无】')),
+  }
+  attachmentStatuses.value[entityType] = {
+    ...(attachmentStatuses.value[entityType] || {}),
+    [String(entityId)]: status,
+  }
+}
+
+function attachmentButtonClass(entityType, entityId) {
+  const status = attachmentStatuses.value[entityType]?.[String(entityId)]
+  if (status?.has_file) return 'attachment-btn attachment-btn-file'
+  if (status?.has_placeholder) return 'attachment-btn attachment-btn-placeholder'
+  return 'attachment-btn attachment-btn-empty'
+}
+
+function getAttachmentDisplayName(entityType, row) {
+  const candidates = [
+    row.title,
+    row.name,
+    row.project_name,
+    row.award_name,
+    row.patent_name,
+    row.issue_name,
+    row.registration_number,
+  ]
+  return candidates.find(Boolean) || `${entityType}_${row.id}`
+}
+
+function getFilenameFromHeaders(contentDisposition) {
+  if (!contentDisposition) return ''
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch (e) {}
+  }
+  const plainMatch = contentDisposition.match(/filename=([^;]+)/i)
+  return plainMatch?.[1]?.replace(/"/g, '') || ''
+}
+
 onMounted(async () => {
   await loadPerson()
   await Promise.all([loadProfile(), loadAllTabs(), loadResumeHistory()])
 })
 </script>
+
+<style scoped>
+.table-scroll {
+  overflow-x: auto;
+}
+
+.pagination-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.attachment-btn {
+  border-width: 1px;
+}
+
+.attachment-btn-empty {
+  background: #ffffff;
+  border-color: #dcdfe6;
+  color: #303133;
+}
+
+.attachment-btn-file {
+  background: #e8f7ee;
+  border-color: #67c23a;
+  color: #1f8f3a;
+}
+
+.attachment-btn-placeholder {
+  background: #e8f3ff;
+  border-color: #409eff;
+  color: #1677d2;
+}
+</style>

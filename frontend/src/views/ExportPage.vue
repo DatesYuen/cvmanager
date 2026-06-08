@@ -27,6 +27,7 @@
                 <el-radio value="json">JSON</el-radio>
                 <el-radio value="xlsx">Excel</el-radio>
                 <el-radio value="docx">DOCX</el-radio>
+                <el-radio value="attachments_zip">附件ZIP</el-radio>
               </el-radio-group>
             </el-form-item>
           </el-col>
@@ -34,6 +35,9 @@
 
         <div v-if="exportForm.format === 'docx'" style="margin-bottom:16px; color:#909399; font-size:13px">
           DOCX 会导出当前筛选后的条目数据。
+        </div>
+        <div v-if="exportForm.format === 'attachments_zip'" style="margin-bottom:16px; color:#909399; font-size:13px">
+          附件ZIP会导出当前筛选后的条目附件，并按数据类型和条目分文件夹整理。
         </div>
 
         <el-divider>筛选条件</el-divider>
@@ -162,7 +166,7 @@ async function loadFilterFields() {
 }
 
 async function doPreview() {
-  if (exportForm.value.format === 'docx') return
+  if (exportForm.value.format === 'docx' || exportForm.value.format === 'attachments_zip') return
   previewing.value = true
   try {
     const res = await api.post('/api/export/items', {
@@ -177,7 +181,7 @@ async function doPreview() {
 }
 
 async function doExport() {
-  if (exportForm.value.format === 'docx') {
+  if (exportForm.value.format === 'docx' || exportForm.value.format === 'attachments_zip') {
     if (!exportForm.value.entity_type) {
       ElMessage.warning('请先选择数据类型')
       return
@@ -188,10 +192,11 @@ async function doExport() {
       const url = URL.createObjectURL(res.data)
       const a = document.createElement('a')
       a.href = url
-      a.download = getFilenameFromHeaders(res.headers['content-disposition']) || 'showcase_export.docx'
+      const fallback = exportForm.value.format === 'attachments_zip' ? 'attachments_export.zip' : 'showcase_export.docx'
+      a.download = getFilenameFromHeaders(res.headers['content-disposition']) || fallback
       a.click()
       URL.revokeObjectURL(url)
-      ElMessage.success('DOCX导出成功')
+      ElMessage.success(exportForm.value.format === 'attachments_zip' ? '附件导出成功' : 'DOCX导出成功')
     } finally {
       exporting.value = false
     }

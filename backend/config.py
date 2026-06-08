@@ -21,3 +21,9 @@ DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
 DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
 
 CONFIDENCE_THRESHOLD = 0.8
+
+# Public paper APIs are useful for manual metadata completion, but doing many
+# network calls inside resume upload can make the upload request time out.
+ENABLE_PUBLIC_PAPER_LOOKUP_ON_PARSE = os.getenv("ENABLE_PUBLIC_PAPER_LOOKUP_ON_PARSE", "0") in {
+    "1", "true", "True", "yes", "YES"
+}

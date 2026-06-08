@@ -14,6 +14,7 @@ from backend.services.export_service import (
     build_docx_export,
     build_entity_docx_export,
     build_resume_pdf_export,
+    build_attachment_zip_export,
 )
 
 router = APIRouter(prefix="/api/export", tags=["export"])
@@ -22,6 +23,20 @@ router = APIRouter(prefix="/api/export", tags=["export"])
 @router.post("/items")
 def export_items(req: ExportRequest, db: Session = Depends(get_db),
                  user: User = Depends(get_current_user)):
+    if req.format == "attachments_zip":
+        try:
+            buf, filename = build_attachment_zip_export(db, req)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        quoted_filename = quote(filename)
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=attachments_export.zip; filename*=UTF-8''{quoted_filename}"
+            }
+        )
+
     if req.format == "docx":
         try:
             if req.entity_type:

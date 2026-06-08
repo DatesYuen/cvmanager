@@ -7,10 +7,12 @@ from sqlalchemy import and_
 from backend.database import get_db, Base
 from backend.models import User, Person
 from backend.services.auth_service import get_current_user
-from backend.services.paper_service import derive_paper_role_flags
+from backend.services.paper_service import derive_paper_role_flags, enrich_paper_data
 
 
 ENTITY_REGISTRY = {}
+DEFAULT_LIST_PAGE_SIZE = 1000
+MAX_LIST_PAGE_SIZE = 5000
 
 
 def register_entity(name: str, model: Type[Base], out_schema, create_schema, update_schema,
@@ -37,7 +39,7 @@ def create_entity_router(entity_name: str) -> APIRouter:
     def list_items(person_id: Optional[int] = None,
                    review_status: Optional[str] = None,
                    page: int = Query(1, ge=1),
-                   page_size: int = Query(100, ge=1, le=500),
+                   page_size: int = Query(DEFAULT_LIST_PAGE_SIZE, ge=1, le=MAX_LIST_PAGE_SIZE),
                    db: Session = Depends(get_db),
                    user: User = Depends(get_current_user)):
         q = db.query(Model)
@@ -75,6 +77,7 @@ def create_entity_router(entity_name: str) -> APIRouter:
             person = db.query(Person).get(item_data["person_id"])
             if person:
                 item_data.update(derive_paper_role_flags(authors, person.name, person.name_en))
+            item_data.update(enrich_paper_data(db, {**item_data, "authors": authors}, fetch_external=True))
         item = Model(**item_data)
         db.add(item)
         db.flush()
@@ -116,6 +119,16 @@ def create_entity_router(entity_name: str) -> APIRouter:
             role_flags = derive_paper_role_flags(authors, item.person.name, getattr(item.person, "name_en", ""))
             item.is_first_author = role_flags["is_first_author"]
             item.is_corresponding_author = role_flags["is_corresponding_author"]
+
+        if hasattr(Model, "authors"):
+            enriched = enrich_paper_data(
+                db,
+                {c.name: getattr(item, c.name) for c in Model.__table__.columns if c.name != "id"},
+                fetch_external=any(field in update_data for field in ("title", "journal", "doi")),
+            )
+            for field, value in enriched.items():
+                if hasattr(item, field) and field not in {"id", "person_id"}:
+                    setattr(item, field, value)
 
         if applicants is not None and hasattr(item, "applicants"):
             from backend.models.patent import PatentApplicant

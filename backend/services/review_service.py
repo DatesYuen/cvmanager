@@ -1,4 +1,5 @@
 """Review service: apply review actions and batch approve."""
+from sqlalchemy import Boolean, Float, Integer
 from sqlalchemy.orm import Session
 from backend.models import (ReviewRecord, Paper, Project, Award, Patent,
                             SoftwareCopyright, StudentAward, Conference,
@@ -34,17 +35,19 @@ def apply_review_action(db: Session, req: ReviewActionRequest, reviewer_id: int)
         return False
 
     editable_columns = {
-        c.name for c in Model.__table__.columns
+        c.name: c for c in Model.__table__.columns
         if c.name not in ("id", "person_id", "raw_text", "confidence", "review_status")
     }
     if req.updated_fields:
+        if "raw_text" in req.updated_fields:
+            item.raw_text = str(req.updated_fields.get("raw_text") or "")
         if req.entity_type == "papers" and "authors_text" in req.updated_fields:
             _update_paper_authors(item, req.updated_fields.get("authors_text", ""))
         if req.entity_type == "patents" and "applicants_text" in req.updated_fields:
             _update_patent_applicants(item, req.updated_fields.get("applicants_text", ""))
         for field, value in req.updated_fields.items():
             if field in editable_columns and not isinstance(value, (dict, list)):
-                setattr(item, field, "" if value is None else value)
+                setattr(item, field, _coerce_column_value(editable_columns[field], value))
 
     item.review_status = "approved" if req.action == "approve" else "rejected"
 
@@ -59,6 +62,42 @@ def apply_review_action(db: Session, req: ReviewActionRequest, reviewer_id: int)
     db.add(record)
     db.commit()
     return True
+
+
+def _coerce_column_value(column, value):
+    """Normalize editable review values before assigning to SQLAlchemy columns."""
+    if value == "":
+        if isinstance(column.type, (Float, Integer)):
+            return None
+        if isinstance(column.type, Boolean):
+            return False
+        return ""
+
+    if value is None:
+        if isinstance(column.type, (Float, Integer)):
+            return None
+        if isinstance(column.type, Boolean):
+            return False
+        return ""
+
+    if isinstance(column.type, Float):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    if isinstance(column.type, Integer):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    if isinstance(column.type, Boolean):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"true", "1", "yes", "y", "是"}
+
+    return value
 
 
 def batch_approve_by_confidence(db: Session, req: BatchReviewRequest,

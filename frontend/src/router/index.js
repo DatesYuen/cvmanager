@@ -21,6 +21,7 @@ const routes = [
       { path: '', name: 'Dashboard', component: () => import('../views/Dashboard.vue') },
       { path: 'persons', name: 'PersonList', component: () => import('../views/PersonList.vue') },
       { path: 'persons/:id', name: 'PersonDetail', component: () => import('../views/PersonDetail.vue'), props: true },
+      { path: 'attachments', name: 'AttachmentManager', component: () => import('../views/AttachmentManager.vue') },
       { path: 'upload/:personId', name: 'ResumeUpload', component: () => import('../views/ResumeUpload.vue'), props: true },
       { path: 'reviews', name: 'ReviewPage', component: () => import('../views/ReviewPage.vue') },
       { path: 'users', name: 'UserManagement', component: () => import('../views/UserManagement.vue') },

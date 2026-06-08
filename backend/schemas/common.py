@@ -55,4 +55,4 @@ class ExportRequest(BaseModel):
     person_id: Optional[int] = None
     filters: List[ExportFilterCondition] = []
     fields: Optional[List[str]] = None  # selected columns
-    format: str = "json"  # json / xlsx / docx
+    format: str = "json"  # json / xlsx / docx / pdf / attachments_zip

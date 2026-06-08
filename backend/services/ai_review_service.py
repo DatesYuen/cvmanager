@@ -176,7 +176,8 @@ def ai_review_low_confidence_items(db: Session, person_id: int, threshold: float
 
 
 def ai_review_single_item(db: Session, entity_type: str, entity_id: int,
-                          reviewer_id: int | None = None) -> dict[str, Any]:
+                          reviewer_id: int | None = None,
+                          raw_text_override: str | None = None) -> dict[str, Any]:
     settings = get_or_create_ai_settings(db)
     _validate_ai_settings(settings)
     Model = ENTITY_MODEL_MAP.get(entity_type)
@@ -185,6 +186,8 @@ def ai_review_single_item(db: Session, entity_type: str, entity_id: int,
     item = db.query(Model).get(entity_id)
     if not item:
         raise ValueError("Entity not found")
+    if raw_text_override is not None:
+        item.raw_text = raw_text_override
     last_error = None
     for attempt in range(settings.ai_review_retry_count + 1):
         try:

@@ -32,7 +32,7 @@
 
       <div v-if="uploading" style="margin-top:24px; text-align:center">
         <el-progress :percentage="100" status="success" :indeterminate="true" />
-        <p style="color:#909399; margin-top:8px">正在解析简历，请稍候...</p>
+        <p style="color:#606266; margin-top:8px">{{ statusMessage }}</p>
       </div>
 
       <div v-if="parseResult" style="margin-top:24px">
@@ -48,7 +48,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage } from 'element-plus'
 
@@ -56,6 +56,17 @@ const props = defineProps({ personId: [String, Number] })
 const auth = useAuthStore()
 const uploading = ref(false)
 const parseResult = ref(null)
+const statusMessage = ref('')
+let statusTimer = null
+let statusIndex = 0
+
+const statusMessages = [
+  '正在上传简历文件...',
+  '正在读取 DOCX 文档内容...',
+  '正在识别个人简介、论文、项目、专利等栏目...',
+  '正在匹配论文中科院分区并写入数据库...',
+  '数据量较大，仍在处理，请稍候...',
+]
 
 function beforeUpload(file) {
   if (!file.name.endsWith('.docx')) {
@@ -63,17 +74,42 @@ function beforeUpload(file) {
     return false
   }
   uploading.value = true
+  parseResult.value = null
+  startStatusMessages()
   return true
 }
 
 function onUploadSuccess(res) {
   uploading.value = false
+  stopStatusMessages()
   parseResult.value = res
   ElMessage.success('简历上传并解析成功')
 }
 
 function onUploadError() {
   uploading.value = false
+  stopStatusMessages()
   ElMessage.error('上传失败')
 }
+
+function startStatusMessages() {
+  stopStatusMessages()
+  statusIndex = 0
+  statusMessage.value = statusMessages[statusIndex]
+  statusTimer = window.setInterval(() => {
+    statusIndex = Math.min(statusIndex + 1, statusMessages.length - 1)
+    statusMessage.value = statusMessages[statusIndex]
+  }, 2500)
+}
+
+function stopStatusMessages() {
+  if (statusTimer) {
+    window.clearInterval(statusTimer)
+    statusTimer = null
+  }
+}
+
+onUnmounted(() => {
+  stopStatusMessages()
+})
 </script>

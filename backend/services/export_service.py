@@ -1,5 +1,8 @@
 """Export service: build filtered data for export."""
 import io
+import os
+import re
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -29,11 +32,27 @@ def build_export_data(db: Session, req: ExportRequest):
     if not Model:
         return [], []
 
+    items = _query_filtered_items(db, req, Model)
+
+    # Build column list
+    all_columns = [c.name for c in Model.__table__.columns if c.name != "id"]
+    columns = req.fields if req.fields else all_columns
+
+    data = []
+    for item in items:
+        row = {}
+        for c in columns:
+            row[c] = getattr(item, c, "")
+        data.append(row)
+
+    return data, columns
+
+
+def _query_filtered_items(db: Session, req: ExportRequest, Model):
     q = db.query(Model)
     if req.person_id:
         q = q.filter(Model.person_id == req.person_id)
 
-    # Apply filters
     for f in req.filters:
         col = getattr(Model, f.field, None)
         if col is None:
@@ -53,21 +72,7 @@ def build_export_data(db: Session, req: ExportRequest):
             q = q.filter(col >= value)
         elif f.op == "lte":
             q = q.filter(col <= value)
-
-    items = q.all()
-
-    # Build column list
-    all_columns = [c.name for c in Model.__table__.columns if c.name != "id"]
-    columns = req.fields if req.fields else all_columns
-
-    data = []
-    for item in items:
-        row = {}
-        for c in columns:
-            row[c] = getattr(item, c, "")
-        data.append(row)
-
-    return data, columns
+    return q.all()
 
 
 def _normalize_filter_value(column, value):
@@ -173,31 +178,7 @@ def build_entity_docx_export(db: Session, req: ExportRequest) -> tuple[io.BytesI
         if person.name_en:
             doc.add_paragraph(person.name_en)
 
-    q = db.query(Model)
-    if req.person_id:
-        q = q.filter(Model.person_id == req.person_id)
-
-    for f in req.filters:
-        col = getattr(Model, f.field, None)
-        if col is None:
-            continue
-        value = _normalize_filter_value(col, f.value)
-        if f.op == "eq":
-            q = q.filter(col == value)
-        elif f.op == "ne":
-            q = q.filter(col != value)
-        elif f.op == "contains":
-            q = q.filter(col.contains(str(value)))
-        elif f.op == "gt":
-            q = q.filter(col > value)
-        elif f.op == "lt":
-            q = q.filter(col < value)
-        elif f.op == "gte":
-            q = q.filter(col >= value)
-        elif f.op == "lte":
-            q = q.filter(col <= value)
-
-    items = q.all()
+    items = _query_filtered_items(db, req, Model)
     for idx, item in enumerate(items, start=1):
         doc.add_paragraph(f"{idx}. {_format_item(req.entity_type, item)}")
 
@@ -209,6 +190,73 @@ def build_entity_docx_export(db: Session, req: ExportRequest) -> tuple[io.BytesI
     else:
         filename = f"{req.entity_type}_{datetime.now().strftime('%Y-%m-%d')}.docx"
     return output, filename
+
+
+def build_attachment_zip_export(db: Session, req: ExportRequest) -> tuple[io.BytesIO, str]:
+    output = io.BytesIO()
+    selected = _collect_attachment_export_items(db, req)
+
+    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        manifest_rows = ["类型,条目ID,条目名称,附件文件名,ZIP路径"]
+        written_names = set()
+        file_count = 0
+
+        for entity_type, item in selected:
+            label = SHOWCASE_ENTITY_LABELS.get(entity_type, entity_type)
+            attachments = db.query(Attachment).filter(
+                Attachment.entity_type == entity_type,
+                Attachment.entity_id == item.id,
+            ).all()
+            item_name = _attachment_item_name(entity_type, item)
+            item_folder = _safe_zip_part(f"{item.id}_{item_name}")[:100] or str(item.id)
+
+            for attachment in attachments:
+                if not os.path.exists(attachment.file_path):
+                    continue
+                filename = _safe_zip_part(attachment.original_filename) or Path(attachment.file_path).name
+                zip_name = _dedupe_zip_name(
+                    f"{label}/{item_folder}/{filename}",
+                    written_names,
+                )
+                archive.write(attachment.file_path, zip_name)
+                file_count += 1
+                manifest_rows.append(
+                    ",".join([
+                        _csv_cell(label),
+                        _csv_cell(str(item.id)),
+                        _csv_cell(item_name),
+                        _csv_cell(attachment.original_filename),
+                        _csv_cell(zip_name),
+                    ])
+                )
+
+        archive.writestr("manifest.csv", "\ufeff" + "\n".join(manifest_rows))
+        if file_count == 0:
+            archive.writestr("README.txt", "当前筛选结果中没有可导出的附件。")
+
+    output.seek(0)
+    base = req.entity_type or "attachments"
+    return output, f"{base}_attachments_{datetime.now().strftime('%Y-%m-%d')}.zip"
+
+
+def _collect_attachment_export_items(db: Session, req: ExportRequest):
+    if req.entity_type:
+        Model = ENTITY_MODEL_MAP.get(req.entity_type)
+        if not Model:
+            raise ValueError("Unsupported entity type")
+        return [(req.entity_type, item) for item in _query_filtered_items(db, req, Model)]
+
+    selected = []
+    for entity_type, Model in SHOWCASE_ENTITY_MODELS.items():
+        scoped_req = ExportRequest(
+            entity_type=entity_type,
+            person_id=req.person_id,
+            filters=[],
+            fields=req.fields,
+            format=req.format,
+        )
+        selected.extend((entity_type, item) for item in _query_filtered_items(db, scoped_req, Model))
+    return selected
 
 
 def build_resume_pdf_export(db: Session, person_id: int | None) -> tuple[io.BytesIO, str]:
@@ -399,6 +447,8 @@ def _format_paper(item: Paper) -> str:
         parts.append(item.pages)
     if item.doi:
         parts.append(f"DOI: {item.doi}")
+    if item.cas_partition:
+        parts.append(f"中科院{item.cas_partition}{'TOP' if item.is_top_journal else ''}")
     return ", ".join(filter(None, parts))
 
 
@@ -412,6 +462,45 @@ def _format_patent(item: Patent) -> str:
         item.status,
     ]
     return "，".join(filter(None, parts))
+
+
+def _attachment_item_name(entity_type: str, item) -> str:
+    for field in (
+        "title",
+        "name",
+        "project_name",
+        "award_name",
+        "patent_name",
+        "issue_name",
+        "registration_number",
+    ):
+        value = getattr(item, field, "")
+        if value:
+            return str(value)
+    return _format_item(entity_type, item)[:80] or str(item.id)
+
+
+def _safe_zip_part(value: str) -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", str(value or "")).strip(" .")
+    return cleaned or "未命名"
+
+
+def _dedupe_zip_name(name: str, seen: set[str]) -> str:
+    candidate = name
+    counter = 2
+    path = Path(name)
+    while candidate in seen:
+        candidate = str(path.with_name(f"{path.stem}_{counter}{path.suffix}")).replace("\\", "/")
+        counter += 1
+    seen.add(candidate)
+    return candidate
+
+
+def _csv_cell(value: str) -> str:
+    text = str(value or "")
+    if any(ch in text for ch in [",", '"', "\n"]):
+        return '"' + text.replace('"', '""') + '"'
+    return text
 
 
 def _format_attachments(db: Session, entity_type: str, entity_id: int) -> str:
