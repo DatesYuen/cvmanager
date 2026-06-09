@@ -9,15 +9,21 @@ class AcademicRoleExtractor(BaseExtractor):
     OPTIONAL_FIELDS = {"start_date": 0.25, "end_date": 0.25}
 
     def extract(self, lines: List[str]) -> List[Dict[str, Any]]:
-        merged = self._merge_multiline(lines)
         results = []
-        for line in merged:
+        for line in self._split_entries(lines):
             parsed = self._parse(line)
             if parsed and parsed.get("title"):
                 parsed["confidence"] = self.calculate_confidence(parsed)
                 parsed["raw_text"] = line
                 results.append(parsed)
         return results
+
+    def _split_entries(self, lines: List[str]) -> List[str]:
+        return [
+            line.strip().strip("；;")
+            for line in lines
+            if line.strip() and not line.strip().endswith(("：", ":"))
+        ]
 
     def _parse(self, text: str) -> Dict[str, Any]:
         result = {"title": "", "start_date": "", "end_date": ""}

@@ -25,7 +25,7 @@ class SoftwareCopyrightExtractor(BaseExtractor):
         text = re.sub(r'^[\d]+[.、）)]\s*', '', text).strip()
 
         # Extract registration number
-        reg_match = re.search(r'(?:软件著作权?登记号|登记号)[：:]\s*(\d+SR\d+)', text)
+        reg_match = re.search(r'(?:软件著作权?登记号|著作权登记号|登记号)[：:\s]*([A-Z0-9]+)', text, re.I)
         if reg_match:
             result["registration_number"] = reg_match.group(1)
 
@@ -34,9 +34,6 @@ class SoftwareCopyrightExtractor(BaseExtractor):
         if date_match:
             result["registration_date"] = date_match.group(1)
 
-        # Split applicant and name
-        # Pattern: Applicants.，SoftwareName(Version)，Date，RegNo
-        # First, remove date and reg number parts
         clean = text
         if result["registration_date"]:
             clean = clean[:clean.find(result["registration_date"])].strip().rstrip(',，。.')
@@ -47,31 +44,39 @@ class SoftwareCopyrightExtractor(BaseExtractor):
             if idx > 0:
                 clean = clean[:idx].strip().rstrip(',，。.')
 
-        # Split by period or 。 to separate applicants from software name
-        # Applicants end with . or 。, then software name follows
-        parts = re.split(r'[.。．]\s*[,，]?\s*', clean, maxsplit=1)
-        if len(parts) >= 2:
-            result["applicant"] = parts[0].strip()
-            result["name"] = parts[1].strip().rstrip(',，。.')
-        else:
-            # Try comma split: last non-name part is the software name
-            comma_parts = re.split(r'[，,]\s*', clean)
-            applicants = []
-            sw_name = ""
-            for p in comma_parts:
-                p = p.strip()
-                if re.match(r'^[\u4e00-\u9fff]{2,4}$', p):
-                    applicants.append(p)
-                elif not sw_name and len(p) > 5:
-                    sw_name = p
-                    break
-                else:
-                    applicants.append(p)
-
-            result["applicant"] = "，".join(applicants)
-            result["name"] = sw_name
-
-        # Clean version info from name
-        result["name"] = re.sub(r'[（(]V[.\d]+[）)]', '', result["name"]).strip()
+        applicants, name = self._split_applicants_and_name(clean)
+        result["applicant"] = "，".join(applicants)
+        result["name"] = name
 
         return result
+
+    def _split_applicants_and_name(self, text: str) -> tuple[list[str], str]:
+        parts = [part.strip() for part in re.split(r'[，,]\s*', text) if part.strip()]
+        applicants = []
+        name_parts = []
+        reached_name = False
+
+        for part in parts:
+            if not reached_name and self._looks_like_applicant(part):
+                applicants.append(part)
+                continue
+            reached_name = True
+            name_parts.append(part)
+
+        if applicants and name_parts:
+            return applicants, "，".join(name_parts).strip("，,。.;； ")
+
+        fallback = re.match(r'^(.{2,80}?)[。．]\s*(.+)$', text)
+        if fallback:
+            applicants = [item.strip() for item in re.split(r'[，,、]\s*', fallback.group(1)) if item.strip()]
+            return applicants, fallback.group(2).strip("，,。.;； ")
+
+        return applicants, "，".join(name_parts or parts).strip("，,。.;； ")
+
+    def _looks_like_applicant(self, text: str) -> bool:
+        value = text.strip()
+        if re.fullmatch(r'[\u4e00-\u9fff]{2,4}(?:等)?', value):
+            return True
+        if any(keyword in value for keyword in ("大学", "学院", "公司", "研究院", "实验室")):
+            return True
+        return False

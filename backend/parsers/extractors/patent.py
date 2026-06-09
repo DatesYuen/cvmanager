@@ -9,6 +9,8 @@ class PatentExtractor(BaseExtractor):
     REQUIRED_FIELDS = {"patent_name": 0.35, "application_number": 0.3, "applicants": 0.2}
     OPTIONAL_FIELDS = {"status": 0.1, "authorization_number": 0.05}
 
+    NUMBER_PATTERN = r'(?:CN\s*)?\d{9,}(?:\.[A-Z0-9]+)*[A-Z]?|PCT-CN[-\d]+|[A-Z]{2,6}\d{6,}(?:\.[A-Z0-9]+)*'
+
     def extract(self, lines: List[str]) -> List[Dict[str, Any]]:
         results = []
         for line in self._split_entries(lines):
@@ -43,30 +45,26 @@ class PatentExtractor(BaseExtractor):
 
         application_match = re.search(
             r'(?:申请号|国际申请号|意大利申请号)[：:\s]*'
-            r'([A-Z]{0,6}[A-Z0-9\- ]{6,}\.?\d*[A-Z]?)',
+            rf'({self.NUMBER_PATTERN})',
             text,
             re.I,
         )
         if application_match:
-            result["application_number"] = application_match.group(1).replace(" ", "")
+            result["application_number"] = self._normalize_number(application_match.group(1))
 
         authorization_match = re.search(
             r'(?:授权号|专利授权号|公开号)[：:\s]*'
-            r'([A-Z]{0,6}[A-Z0-9\- ]{6,}\.?\d*[A-Z]?)',
+            rf'({self.NUMBER_PATTERN})',
             text,
             re.I,
         )
         if authorization_match:
-            result["authorization_number"] = authorization_match.group(1).replace(" ", "")
+            result["authorization_number"] = self._normalize_number(authorization_match.group(1))
 
-        if not result["application_number"] or not result["authorization_number"]:
+        if not result["application_number"] and not result["authorization_number"]:
             loose_numbers = [
-                match.group(1).replace(" ", "")
-                for match in re.finditer(
-                    r'((?:CN\s*)?\d{9,}(?:\.\d+)?[A-Z]?|PCT-CN[-\d]+|[A-Z]{2,6}\d{6,}(?:\.\d+)?)',
-                    text,
-                    re.I,
-                )
+                self._normalize_number(match.group(1))
+                for match in re.finditer(rf'({self.NUMBER_PATTERN})', text, re.I)
             ]
             if len(loose_numbers) == 1 and not result["application_number"] and not result["authorization_number"]:
                 number = loose_numbers[0]
@@ -81,13 +79,15 @@ class PatentExtractor(BaseExtractor):
                     elif not result["authorization_number"]:
                         result["authorization_number"] = number
 
-        status_match = re.search(r'(已授权|授权|公开|实审|申请中)(?!号)', text)
+        status_match = re.search(r'状态[：:\s]*(已授权|授权|公开|实审|申请中)|(?<!申请)(已授权|授权|公开|实审|申请中)(?!号)', text)
         if status_match:
-            result["status"] = status_match.group(1)
+            result["status"] = status_match.group(1) or status_match.group(2)
+        elif result["authorization_number"]:
+            result["status"] = "授权"
 
         clean = re.sub(
             r'(?:申请号|专利授权号|授权号|公开号|国际申请号|意大利申请号)[：:\s]*'
-            r'[A-Z]{0,6}[A-Z0-9\- ]{6,}\.?\d*[A-Z]?',
+            rf'{self.NUMBER_PATTERN}',
             '',
             text,
             flags=re.I,
@@ -96,8 +96,9 @@ class PatentExtractor(BaseExtractor):
             if value:
                 clean = clean.replace(value, "")
         if result["status"]:
+            clean = re.sub(r'[，,\s]*状态[：:\s]*' + re.escape(result["status"]) + r'\s*', '', clean)
             clean = re.sub(r'[，,\s]*' + re.escape(result["status"]) + r'\s*', '', clean)
-        clean = re.sub(r'[，,\s]*(已授权|授权|公开|实审|申请中)(?!号)\s*', '', clean)
+        clean = re.sub(r'[，,\s]*(?:状态[：:\s]*)?(已授权|授权|公开|实审|申请中)(?!号)\s*', '', clean)
         clean = clean.strip("，,。.;； ")
 
         applicants, title = self._split_people_and_title(clean)
@@ -105,6 +106,15 @@ class PatentExtractor(BaseExtractor):
         result["patent_name"] = title
 
         return result
+
+    def _normalize_number(self, value: str) -> str:
+        number = re.sub(r'\s+', '', value or '').strip('，,。.;； ')
+        while True:
+            repeated_suffix = re.match(r'^(.+\.([A-Z0-9]+))\.\2$', number, re.I)
+            if not repeated_suffix:
+                break
+            number = repeated_suffix.group(1)
+        return number
 
     def _split_people_and_title(self, text: str) -> Tuple[List[str], str]:
         period_split = re.match(r'^(.{2,80}?)[.．]\s*(.+)$', text)

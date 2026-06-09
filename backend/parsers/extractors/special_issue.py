@@ -22,6 +22,7 @@ class SpecialIssueExtractor(BaseExtractor):
     def _parse(self, text: str) -> Dict[str, Any]:
         result = {"issue_name": "", "journal_name": "", "date": "", "role": ""}
         text = re.sub(r'^[\d]+[.、）)]\s*', '', text).strip()
+        text = re.sub(r'https?://\S+', '', text).strip()
 
         date_match = re.search(r'(\d{4}(?:[.\-/年]\d{1,2}(?:月)?)?)', text)
         if date_match:
@@ -31,11 +32,29 @@ class SpecialIssueExtractor(BaseExtractor):
         if role_match:
             result["role"] = role_match.group(1)
 
-        parts = re.split(r'[，,]\s*', text)
+        clean = text
+        for value in [result["date"], result["role"]]:
+            if value:
+                clean = clean.replace(value, "")
+        clean = re.sub(r'[()（）]', '', clean)
+        clean = re.sub(r'\s+', ' ', clean).strip("，,。.;； ")
+
+        quoted_issue = re.match(r'^(Special Issue\s+"[^"]+")\s*[,，]\s*(.+)$', clean, re.I)
+        if quoted_issue:
+            result["issue_name"] = quoted_issue.group(1).strip()
+            result["journal_name"] = quoted_issue.group(2).split(",")[0].strip("，,。.;； ")
+            return result
+
+        on_issue = re.match(r'^(Special Issue on [^,，]+)\s*[,，]\s*(.+)$', clean, re.I)
+        if on_issue:
+            result["issue_name"] = on_issue.group(1).strip()
+            result["journal_name"] = on_issue.group(2).split(",")[0].strip("，,。.;； ")
+            return result
+
+        parts = [part.strip() for part in re.split(r'[，,]\s*', clean) if part.strip()]
+        if parts:
+            result["issue_name"] = parts[0]
         if len(parts) >= 2:
-            result["issue_name"] = parts[0].strip()
-            result["journal_name"] = parts[1].strip()
-        elif len(parts) == 1:
-            result["issue_name"] = parts[0].strip()
+            result["journal_name"] = parts[1]
 
         return result

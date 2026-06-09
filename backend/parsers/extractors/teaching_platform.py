@@ -31,9 +31,9 @@ class TeachingPlatformExtractor(BaseExtractor):
         text = re.sub(r'^[\d]+[.、）)]\s*', '', text).strip()
         text = re.sub(r'^(?:学科及教学情况|学科及教学平台建设情况)[：:]\s*', '', text).strip()
 
-        date_match = re.search(r'(\d{4}(?:[.\-/年]\d{1,2}(?:月)?)?)', text)
+        date_match = re.search(r'(\d{4}\s*年\s*\d{1,2}\s*月|\d{4}(?:[.\-/年]\d{1,2}(?:月)?)?)', text)
         if date_match:
-            result["approval_date"] = date_match.group(1)
+            result["approval_date"] = re.sub(r'\s+', '', date_match.group(1))
 
         position_match = re.search(
             r'(学科建设负责人|专业负责人|负责人|主任|副主任|成员|骨干|带头人|执行院长)',

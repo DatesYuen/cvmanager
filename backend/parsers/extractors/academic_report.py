@@ -23,7 +23,11 @@ class AcademicReportExtractor(BaseExtractor):
         result = {"name": "", "report_type": "", "date": ""}
         text = re.sub(r'^[\d]+[.、）)]\s*', '', text).strip()
 
-        date_match = re.search(r'(\d{4}(?:[.\-/年]\d{1,2}(?:月)?)?)', text)
+        date_match = re.search(
+            r'(\d{4}年\d{1,2}月\d{1,2}日(?:[-—~～至到]\d{1,2}日)?|'
+            r'\d{4}年\d{1,2}月|\d{4}(?:[.\-/]\d{1,2})?)',
+            text,
+        )
         if date_match:
             result["date"] = date_match.group(1)
 
@@ -35,6 +39,7 @@ class AcademicReportExtractor(BaseExtractor):
         for val in [result["date"], result["report_type"]]:
             if val:
                 clean = clean.replace(val, "")
+        clean = re.sub(r'(?:做|作|进行)\s*$', '', clean.strip())
         result["name"] = clean.strip().strip(',，。.、 ')
 
         return result

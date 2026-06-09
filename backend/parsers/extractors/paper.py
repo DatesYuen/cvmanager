@@ -7,7 +7,7 @@ from backend.parsers.extractors.base import BaseExtractor
 class PaperExtractor(BaseExtractor):
     REQUIRED_FIELDS = {"title": 0.3, "journal": 0.25, "authors": 0.2}
     OPTIONAL_FIELDS = {"year": 0.1, "volume": 0.05, "issue": 0.05, "pages": 0.05,
-                       "doi": 0.05}
+                       "doi": 0.05, "issn": 0.03}
 
     # Common Chinese/English separators between author list and title
     AUTHOR_TITLE_SEPS = ['. ', '。', '．']
@@ -38,26 +38,38 @@ class PaperExtractor(BaseExtractor):
 
     def _parse_citation(self, text: str) -> Dict[str, Any]:
         result = {"title": "", "journal": "", "year": "", "doi": "",
-                  "issue": "", "volume": "", "pages": "", "authors": []}
+                  "issue": "", "volume": "", "pages": "", "authors": [],
+                  "issn": "", "eissn": "", "cas_partition": "", "source_type": ""}
 
         # Remove trailing classification markers like （CCF A）（中科院二区）
-        clean = re.sub(r'[（(]\s*(?:CCF\s*[A-C]|中科院[一二三四五]区|SCI|EI|SSCI|CSSCI|北大核心)[）)]\s*$', '', text).strip()
+        clean = text.strip()
+        result.update(self._extract_index_markers(clean))
+        clean = re.sub(
+            r'[（(]\s*(?:CCF\s*[A-C]|中科院\s*[一二三四五12345]区|SCI[^）)]*|EI检索|'
+            r'SSCI|CSSCI|北大核心|中文核心|ISTP检索)[）)]\s*[.。]?\s*$',
+            '',
+            clean,
+            flags=re.I,
+        ).strip()
 
         # Extract DOI
-        doi_match = re.search(r'(?:doi:\s*|https?://doi\.org/)?(10\.\d{4,9}/[^\s,，]+)', clean, re.I)
+        doi_match = re.search(r'(?:doi:\s*|https?://doi\.org/)?(10\.\d{4,9}/[^\s,，；;（]+)', clean, re.I)
         if doi_match:
             result["doi"] = re.sub(r'[\s\]\)）.,，。；;]+$', '', doi_match.group(1).strip())
             clean = clean[:doi_match.start()].strip().rstrip(',，.')
 
-        # Extract ISSN (remove it, not needed as field)
-        clean = re.sub(r'ISSN\s*[\d-]+[,，\s]*', '', clean).strip()
+        issn_data = self._extract_issn(clean)
+        result.update({key: value for key, value in issn_data.items() if value})
+        clean = re.sub(r'\b(?:E-?ISSN|ISSN)\s*[:：]?\s*[\dXx-]+[,，\s]*', '', clean, flags=re.I).strip()
 
         marker_parsed = self._parse_j_marker(clean, result["doi"])
         if marker_parsed:
+            marker_parsed.update({key: value for key, value in result.items() if value and key not in marker_parsed})
             return marker_parsed
 
         comma_parsed = self._parse_comma_delimited(clean, result["doi"])
         if comma_parsed:
+            comma_parsed.update({key: value for key, value in result.items() if value and key not in comma_parsed})
             return comma_parsed
 
         # Try to split authors from the rest
@@ -112,6 +124,46 @@ class PaperExtractor(BaseExtractor):
         result["title"] = title
         result["journal"] = journal
 
+        return result
+
+    def _extract_index_markers(self, text: str) -> Dict[str, Any]:
+        result = {"cas_partition": "", "source_type": ""}
+        cas_match = re.search(r'中科院\s*([一二三四五12345])区', text)
+        if cas_match:
+            result["cas_partition"] = self._normalize_partition(cas_match.group(1))
+
+        source_patterns = (
+            ("SSCI", r'\bSSCI\b'),
+            ("SCIE", r'\bSCIE\b'),
+            ("SCI", r'\bSCI\b|SCI\d+'),
+            ("EI", r'\bEI\b|EI检索'),
+            ("CSSCI", r'\bCSSCI\b'),
+            ("ISTP", r'\bISTP\b|ISTP检索'),
+        )
+        source_types = [
+            label
+            for label, pattern in source_patterns
+            if re.search(pattern, text, re.I)
+        ]
+        if source_types:
+            result["source_type"] = "/".join(dict.fromkeys(source_types))
+        return result
+
+    def _normalize_partition(self, value: str) -> str:
+        mapping = {
+            "一": "一区", "二": "二区", "三": "三区", "四": "四区", "五": "五区",
+            "1": "一区", "2": "二区", "3": "三区", "4": "四区", "5": "五区",
+        }
+        return mapping.get(value, "")
+
+    def _extract_issn(self, text: str) -> Dict[str, str]:
+        result = {"issn": "", "eissn": ""}
+        for match in re.finditer(r'\b(E-?ISSN|ISSN)\s*[:：]?\s*([\dXx-]+)', text, re.I):
+            label = match.group(1).upper().replace("-", "")
+            if label == "EISSN":
+                result["eissn"] = match.group(2)
+            else:
+                result["issn"] = match.group(2)
         return result
 
     def _parse_j_marker(self, text: str, doi: str = "") -> Dict[str, Any] | None:
@@ -172,22 +224,29 @@ class PaperExtractor(BaseExtractor):
         if len(tokens) < 5:
             return None
 
-        year_idx = next((idx for idx, token in enumerate(tokens) if re.fullmatch(r'(19|20)\d{2}', token)), -1)
+        year_idx = next((idx for idx, token in enumerate(tokens) if re.search(r'(19|20)\d{2}', token)), -1)
         if year_idx < 2:
             return None
 
         journal_idx = year_idx - 1
-        title_start = None
+        authors_tokens = []
+        title_tokens = []
         for idx in range(journal_idx):
-            if not self._looks_like_author_name(tokens[idx].rstrip('*')):
-                title_start = idx
-                break
+            token = tokens[idx].strip()
+            if not title_tokens:
+                split_token = self._split_author_title_token(token)
+                if split_token:
+                    authors_tokens.append(split_token[0])
+                    title_tokens.append(split_token[1])
+                    continue
+                if self._looks_like_author_name(token.rstrip('*')):
+                    authors_tokens.append(token)
+                    continue
+            title_tokens.append(token)
 
-        if title_start is None or title_start == 0 or title_start >= journal_idx:
+        if not authors_tokens or not title_tokens:
             return None
 
-        authors_tokens = tokens[:title_start]
-        title_tokens = tokens[title_start:journal_idx]
         journal = tokens[journal_idx].strip().rstrip('.')
         title = ",".join(title_tokens).strip()
         title = re.sub(r'\[J\]', '', title, flags=re.I).strip()
@@ -195,10 +254,11 @@ class PaperExtractor(BaseExtractor):
         if not title or not journal:
             return None
 
+        year_match = re.search(r'(19|20)\d{2}', tokens[year_idx])
         result = {
             "title": title,
             "journal": journal,
-            "year": tokens[year_idx],
+            "year": year_match.group(0) if year_match else tokens[year_idx],
             "doi": doi,
             "issue": "",
             "volume": "",
@@ -226,6 +286,17 @@ class PaperExtractor(BaseExtractor):
                 result["pages"] = candidate
 
         return result
+
+    def _split_author_title_token(self, token: str) -> tuple[str, str] | None:
+        for sep in ['. ', '。', '．']:
+            pos = token.find(sep)
+            if pos <= 0:
+                continue
+            before = token[:pos].strip()
+            after = token[pos + len(sep):].strip()
+            if self._looks_like_author_name(before) and len(after) > 5:
+                return before, after
+        return None
 
     def _split_authors(self, text: str):
         """Split author list from the rest of the citation."""
@@ -278,8 +349,8 @@ class PaperExtractor(BaseExtractor):
 
     def _looks_like_authors(self, text: str) -> bool:
         """Check if text looks like a list of author names."""
-        # Split by comma
-        names = re.split(r'[,，]\s*', text)
+        separator = r'[;；]\s*' if re.search(r'[;；]', text) else r'[,，]\s*'
+        names = re.split(separator, text)
         if len(names) < 1:
             return False
         valid = sum(1 for n in names if self._looks_like_author_name(n.strip()))
@@ -287,30 +358,43 @@ class PaperExtractor(BaseExtractor):
 
     def _looks_like_author_name(self, text: str) -> bool:
         """Check if text looks like a single author name."""
+        text = text.strip()
+        text = re.sub(r'[（(][^）)]*(?:通信|corresponding)[^）)]*[）)]', '', text, flags=re.I)
         text = text.strip().rstrip('*')
         if not text:
             return False
+        if re.fullmatch(r'et\s+al\.?', text, re.I):
+            return True
+        if re.match(r"^[A-Za-z][A-Za-z\-']+\s*[,，]\s*[A-Za-z][A-Za-z\-']+$", text):
+            return True
         # Chinese name: 2-4 Chinese chars
-        if re.match(r'^[\u4e00-\u9fff]{2,5}$', text):
+        if re.match(r'^[\u4e00-\u9fff]\s*[\u4e00-\u9fff]{1,4}$', text):
             return True
         if any(token in text for token in ["[J]", "]", "http", "doi", "/"]):
             return False
         parts = [part for part in text.replace(".", " ").split() if part]
         if 2 <= len(parts) <= 4 and all(re.fullmatch(r"[A-Za-z][A-Za-z\-']*", part) for part in parts):
             return True
+        if 2 <= len(parts) <= 6 and re.fullmatch(r"[A-Za-z][A-Za-z\-']*", parts[0]):
+            if all(re.fullmatch(r"[A-Za-z]\.?", part) for part in parts[1:]):
+                return True
         if 2 <= len(parts) <= 4 and all(re.fullmatch(r"[A-Za-z]\.?", part) for part in parts):
             return True
         return False
 
     def _parse_authors(self, text: str) -> List[Dict[str, Any]]:
         """Parse author string into list of author dicts."""
-        names = re.split(r'[,，]\s*', text)
+        separator = r'[;；]\s*' if re.search(r'[;；]', text) else r'[,，]\s*'
+        names = re.split(separator, text)
         authors = []
         for i, name in enumerate(names):
             name = name.strip()
             if not name:
                 continue
-            is_corresponding = '*' in name
+            if re.fullmatch(r'et\s+al\.?', name, re.I):
+                continue
+            is_corresponding = '*' in name or bool(re.search(r'[（(][^）)]*(?:通信|corresponding)[^）)]*[）)]', name, re.I))
+            name = re.sub(r'[（(][^）)]*(?:通信|corresponding)[^）)]*[）)]', '', name, flags=re.I)
             name = name.replace('*', '').strip()
             authors.append({
                 "name": name,
@@ -344,7 +428,7 @@ class PaperExtractor(BaseExtractor):
             journal_part = parts[1].strip()
 
             # Clean journal: remove year and numbers
-            journal_clean = re.sub(r'[,，]\s*(19|20)\d{2}.*$', '', journal_part).strip()
+            journal_clean = re.sub(r'[\s,，]*(19|20)\d{2}.*$', '', journal_part).strip()
             journal_clean = re.sub(r'\d+\(\d+\).*$', '', journal_clean).strip()
             journal_clean = journal_clean.rstrip(',，.:：')
 

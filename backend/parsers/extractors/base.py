@@ -58,10 +58,10 @@ class BaseExtractor:
             elif re.match(r'^\d{4}[.\-年/]', stripped):
                 is_new = True
             # Starts with Chinese name pattern (for patents, papers)
-            elif re.match(r'^[\u4e00-\u9fff]{2,4}\s*[,，]', stripped):
+            elif re.match(r'^[\u4e00-\u9fff]{2,5}\s*[,，.。．]', stripped):
                 is_new = True
             # Starts with English name pattern
-            elif re.match(r'^[A-Z][a-z]+\s+[A-Z]', stripped):
+            elif re.match(r"^[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]*|[,;，；])", stripped):
                 is_new = True
             # Empty line means new entry
             elif not stripped:
